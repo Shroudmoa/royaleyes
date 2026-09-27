@@ -38,9 +38,11 @@ fn main() {
     for (w, h, level, hover) in cases {
         let mut f = Frame::new(w, h);
         let mut s = Slider::new(level);
-        // Settle the glide so the bar is shown at the level asked for.
+        // Settle the glide so the bar is shown at the level asked for, and keep
+        // touching it so it has not faded out by the time we draw.
         for _ in 0..200 {
-            s.update(1.0 / 60.0);
+            s.update(1.0 / 60.0, false);
+            s.touch();
         }
         s.draw(&mut f, w, h, hover);
 

@@ -3,6 +3,9 @@
 //! The eye always has its own interference driver running (bursts on top of a
 //! low rest level). This is the fader in front of it: at 0 the eye is left in
 //! peace, at 1 you get everything the driver asks for.
+//!
+//! The bar fades itself out after [`IDLE_HIDE`] seconds without a change, so
+//! it stops sitting under the eye for the whole run. Touching it brings it back.
 
 use crate::color::Rgb;
 use crate::frame::{Cell, Frame};
@@ -10,6 +13,12 @@ use crate::util::{clamp, hsv, lerp};
 
 /// How far one key press moves the level.
 pub const STEP: f32 = 0.05;
+
+/// Seconds without a change before the bar fades away.
+pub const IDLE_HIDE: f32 = 3.0;
+/// Seconds to fade in or out. Short enough to feel like it blinks rather than
+/// lingers, long enough not to snap.
+const FADE: f32 = 0.35;
 
 /// Offset of the first track cell from the left edge of the bar. The cells
 /// before it are `' '`, the label, `' '` and `'['`.
@@ -38,6 +47,11 @@ pub struct Slider {
     /// 1 right after a change, decaying to 0. Brightens the bar so a keypress
     /// is acknowledged even when the change is only one step.
     pulse: f32,
+    /// Seconds since the fader was last touched.
+    idle: f32,
+    /// 1 while the bar should be up, 0 while it should be gone. Eased, so it
+    /// fades rather than blinking out between frames.
+    alpha: f32,
 }
 
 impl Slider {
@@ -49,6 +63,8 @@ impl Slider {
             shown: level,
             glide: 14.0,
             pulse: 0.0,
+            idle: 0.0,
+            alpha: 1.0,
         }
     }
 
@@ -73,12 +89,44 @@ impl Slider {
         }
         self.level = level;
         self.glide = glide;
+        // Reaching for the fader counts as using it, even if the press landed
+        // on the value it was already at. A control that vanishes under your
+        // finger while you are holding it down is not a control.
+        self.touch();
     }
 
-    pub fn update(&mut self, dt: f32) {
+    /// Call whenever the fader is being used, to stop it fading out. Nudges the
+    /// fade up as well, so the bar counts as back immediately rather than
+    /// staying invisible for the frame before it starts fading in.
+    pub fn touch(&mut self) {
+        self.idle = 0.0;
+        self.alpha = self.alpha.max(0.05);
+    }
+
+    /// `hover` is whether the pointer is over the bar, which also counts as
+    /// using it: it should not fade out from under the cursor.
+    pub fn update(&mut self, dt: f32, hover: bool) {
         let k = 1.0 - (-dt * self.glide).exp();
         self.shown = lerp(self.shown, self.level, k);
         self.pulse = (self.pulse - dt * 2.6).max(0.0);
+
+        self.idle += dt;
+        if hover {
+            self.idle = 0.0;
+        }
+        let want: f32 = if self.idle < IDLE_HIDE { 1.0 } else { 0.0 };
+        let step = dt / FADE;
+        self.alpha = if want > self.alpha {
+            (self.alpha + step).min(want)
+        } else {
+            (self.alpha - step).max(want)
+        };
+    }
+
+    /// Is the bar up? Below this it is too faint to read or to aim at, so it
+    /// stops being drawn and stops accepting clicks.
+    pub fn visible(&self) -> bool {
+        self.alpha > 0.02
     }
 
     /// Where the bar sits for a given terminal size, as `(col, row, cells)`.
@@ -101,13 +149,17 @@ impl Slider {
     }
 
     /// The level a click at `(col, row)` would set, or `None` if the click did
-    /// not land on the track.
+    /// not land on the track — including when the bar has faded out, since you
+    /// should not be able to set a level with a control you cannot see.
     ///
     /// The track is a ramp across its *whole* length, so the first cell is
     /// exactly 0 and the last is exactly 1. Dividing by the cell count instead
     /// would leave the right end a step short of full, and a bar you cannot
     /// push all the way over feels broken.
     pub fn level_at(&self, col: i32, row: i32, w: usize, h: usize) -> Option<f32> {
+        if !self.visible() {
+            return None;
+        }
         let (x, y, cells) = Self::layout(w, h)?;
         let start = track_start(x);
         if row != y || col < start || col >= start + cells as i32 {
@@ -117,9 +169,10 @@ impl Slider {
         Some(clamp((col - start) as f32 / span, 0.0, 1.0))
     }
 
-    /// Is the pointer anywhere over the bar, not just the track? Used to show
-    /// that the bar is live.
-    pub fn hovering(&self, col: i32, row: i32, w: usize, h: usize) -> bool {
+    /// Is this cell part of the bar, whether or not the bar is currently up?
+    /// Clicking where the bar used to be should bring it back rather than
+    /// being taken as a poke at the eye.
+    pub fn footprint(&self, col: i32, row: i32, w: usize, h: usize) -> bool {
         let Some((x, y, cells)) = Self::layout(w, h) else {
             return false;
         };
@@ -127,12 +180,24 @@ impl Slider {
         row == y && col >= x && col < x + total
     }
 
-    /// Paint the bar. Drawn after the glitch layer so it stays readable.
+    /// Is the pointer anywhere over the bar, not just the track? Used to show
+    /// that the bar is live, and to hold it up while the cursor is on it.
+    pub fn hovering(&self, col: i32, row: i32, w: usize, h: usize) -> bool {
+        self.visible() && self.footprint(col, row, w, h)
+    }
+
+    /// Paint the bar. Drawn after the glitch layer so it stays readable, and
+    /// not at all once it has faded out: the eye repaints that row every frame,
+    /// so the bar leaves nothing behind.
     pub fn draw(&self, f: &mut Frame, w: usize, h: usize, hover: bool) {
+        if !self.visible() {
+            return;
+        }
         let Some((x, y, cells)) = Self::layout(w, h) else {
             return;
         };
         let cells = cells as i32;
+        let fade = self.alpha;
 
         // Green when peaceful, red when the eye is coming apart: the colour is
         // the level, so the bar explains itself without a legend.
@@ -145,13 +210,15 @@ impl Slider {
         let label = Rgb::lerp(Rgb(96, 104, 130), Rgb(232, 236, 255), hot);
         let readout = Rgb::lerp(Rgb(70, 76, 100), Rgb(236, 240, 255), hot.max(0.55));
 
+        // Fading towards the background rather than towards black, so the bar
+        // dissolves into the same void the eye is drawn on.
         let mut put = |i: i32, ch: char, fg: Rgb| {
             f.set(
                 x + i,
                 y,
                 Cell {
                     ch,
-                    fg: Some(fg),
+                    fg: Some(Rgb::lerp(Rgb::VOID, fg, fade)),
                     bg: Some(Rgb::VOID),
                 },
             );

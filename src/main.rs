@@ -159,10 +159,15 @@ fn main() -> io::Result<()> {
                         pointer = Some(at);
                         // A click on the bar sets the level; anywhere else it
                         // is a poke. Getting the two confused would be
-                        // maddening, so the bar wins where it overlaps.
-                        match slider.level_at(at.0, at.1, w, h) {
-                            Some(v) => slider.set(v),
-                            None => eye.burst(&mut rng),
+                        // maddening, so the bar wins where it overlaps — and it
+                        // still wins where it *used* to be, so a click at a bar
+                        // that has faded out brings it back instead.
+                        if let Some(v) = slider.level_at(at.0, at.1, w, h) {
+                            slider.set(v);
+                        } else if slider.footprint(at.0, at.1, w, h) {
+                            slider.touch();
+                        } else {
+                            eye.burst(&mut rng);
                         }
                         if m.modifiers.contains(KeyModifiers::SHIFT) {
                             eye.blink();
@@ -170,16 +175,21 @@ fn main() -> io::Result<()> {
                     }
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                         // Scrolling over the bar nudges the level, like every
-                        // other volume control in the world.
+                        // other volume control in the world. Over a bar that has
+                        // faded out it just wakes it up.
                         let over = pointer
-                            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
+                            .map(|(cx, cy)| slider.footprint(cx, cy, w, h))
                             .unwrap_or(false);
                         if over {
-                            slider.adjust(if m.kind == MouseEventKind::ScrollUp {
-                                1.0
+                            if slider.visible() {
+                                slider.adjust(if m.kind == MouseEventKind::ScrollUp {
+                                    1.0
+                                } else {
+                                    -1.0
+                                });
                             } else {
-                                -1.0
-                            });
+                                slider.touch();
+                            }
                         } else {
                             eye.burst(&mut rng);
                         }
@@ -208,7 +218,12 @@ fn main() -> io::Result<()> {
         }
 
         // ---- simulate ------------------------------------------------------
-        slider.update(dt);
+        // Whether the pointer is over the bar decides both how it looks and
+        // whether it counts as being used, so work that out before updating.
+        let hover = pointer
+            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
+            .unwrap_or(false);
+        slider.update(dt, hover);
         eye.gain = slider.level();
         eye.update(dt, &mut rng, mouse, w, h);
 
@@ -222,10 +237,8 @@ fn main() -> io::Result<()> {
             hint(&mut frame, t, w, h);
         }
         // The bar goes on after the interference, so it stays readable however
-        // badly the frame is coming apart.
-        let hover = pointer
-            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
-            .unwrap_or(false);
+        // badly the frame is coming apart. It stops being drawn entirely once
+        // it has gone idle, which leaves the eye on its own.
         slider.draw(&mut frame, w, h, hover);
         frame.present(&mut out, &mut prev, truecolor)?;
 

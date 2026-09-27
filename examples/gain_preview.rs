@@ -39,7 +39,7 @@ fn main() {
         // Run a while, then keep the loudest frame: the rest level is calm, so
         // a single arbitrary still would not show what the fader does.
         while t < 30.0 {
-            slider.update(1.0 / FPS);
+            slider.update(1.0 / FPS, false);
             eye.gain = slider.level();
             eye.update(
                 1.0 / FPS,
@@ -64,7 +64,7 @@ fn main() {
         let mut f = Frame::new(W, H);
         f.cells = peak_cells.expect("at least one frame");
         for _ in 0..200 {
-            slider.update(1.0 / FPS);
+            slider.update(1.0 / FPS, false);
         }
         slider.draw(&mut f, W, H, false);
 

@@ -1,7 +1,8 @@
 //! Tests for the chaos slider: the level is clamped, the bar and the click
-//! mapping agree, and turning the gain down actually silences the eye.
+//! mapping agree, turning the gain down actually silences the eye, and the bar
+//! gets out of the way when nobody is using it.
 
-use glitch_eye::chaos::{Slider, STEP};
+use glitch_eye::chaos::{Slider, IDLE_HIDE, STEP};
 use glitch_eye::eye::Eye;
 use glitch_eye::frame::Frame;
 use glitch_eye::rng::Rng;
@@ -9,12 +10,27 @@ use glitch_eye::rng::Rng;
 const W: usize = 100;
 const H: usize = 30;
 
-/// Settle `shown` onto `level` so the assertions are not racing the glide.
+/// Settle `shown` onto `level` so the assertions are not racing the glide, and
+/// keep the bar up so it has not faded out.
 fn settled(mut s: Slider) -> Slider {
     for _ in 0..200 {
-        s.update(1.0 / 60.0);
+        s.update(1.0 / 60.0, false);
+        s.touch();
     }
     s
+}
+
+/// Run the clock forward without touching the fader.
+fn idle(s: &mut Slider, seconds: f32) {
+    for _ in 0..(seconds * 60.0) as u32 {
+        s.update(1.0 / 60.0, false);
+    }
+}
+
+/// Is anything of the bar actually painted on the frame's bottom row?
+fn bar_painted(f: &Frame) -> bool {
+    let (_, row, _) = Slider::layout(f.w, f.h).expect("bar fits");
+    (0..f.w as i32).any(|x| f.get(x, row).ch != ' ')
 }
 
 #[test]
@@ -148,6 +164,136 @@ fn tiny_terminals_get_no_bar_at_all() {
     }
     // Just wide enough, it comes back.
     assert!(Slider::layout(19, 3).is_some());
+}
+
+#[test]
+fn the_bar_fades_away_after_three_idle_seconds() {
+    let mut s = Slider::new(0.5);
+    assert!(s.visible(), "the bar should be up at the start");
+
+    // It must still be there right up to the deadline, then go.
+    idle(&mut s, IDLE_HIDE - 0.2);
+    assert!(s.visible(), "should still be up just before 3s");
+
+    idle(&mut s, 0.2 + 0.4);
+    assert!(!s.visible(), "should be gone after 3s");
+}
+
+#[test]
+fn the_bar_is_not_drawn_once_it_has_gone() {
+    let mut s = Slider::new(0.6);
+    let mut f = Frame::new(W, H);
+    s.draw(&mut f, W, H, false);
+    assert!(bar_painted(&f), "the bar should be on screen to begin with");
+
+    // Once hidden it must not paint a single cell. The eye repaints the frame
+    // underneath, so anything left here would linger as a ghost.
+    idle(&mut s, IDLE_HIDE + 0.5);
+    f.cells.fill(glitch_eye::frame::Cell::default());
+    s.draw(&mut f, W, H, false);
+    assert!(!bar_painted(&f), "a hidden bar should leave the row alone");
+}
+
+#[test]
+fn changing_the_level_brings_the_bar_back() {
+    let mut s = Slider::new(0.5);
+    idle(&mut s, IDLE_HIDE + 0.5);
+    assert!(!s.visible(), "precondition: the bar has gone");
+
+    s.adjust(1.0);
+    assert!(s.visible(), "a keypress should bring it straight back");
+    assert!((s.level() - 0.55).abs() < 1e-6);
+
+    idle(&mut s, IDLE_HIDE + 0.5);
+    assert!(!s.visible());
+    s.set(0.2);
+    assert!(s.visible(), "so should a click on the track");
+}
+
+#[test]
+fn a_press_that_does_not_move_the_level_still_counts_as_using_it() {
+    // Holding `+` against the top of the range is still someone using the
+    // fader, and the bar must not fade out from under them.
+    let mut s = Slider::new(1.0);
+    for _ in 0..20 {
+        s.adjust(1.0);
+    }
+    idle(&mut s, IDLE_HIDE - 0.5);
+    assert!(s.visible(), "pressing + at the top should keep the bar up");
+}
+
+#[test]
+fn hovering_keeps_the_bar_up() {
+    // The bar should not dissolve while the cursor is resting on it.
+    let mut s = Slider::new(0.5);
+    let (x, row, _) = Slider::layout(W, H).unwrap();
+    for _ in 0..(10.0 * 60.0) as u32 {
+        s.update(1.0 / 60.0, true);
+    }
+    assert!(
+        s.visible(),
+        "10s of hovering should not hide the bar (still at {x},{row})"
+    );
+}
+
+#[test]
+fn a_hidden_bar_cannot_be_clicked_but_its_old_spot_wakes_it() {
+    let mut s = Slider::new(0.5);
+    let (x, row, cells) = Slider::layout(W, H).unwrap();
+    let track = x + 3 + "CHAOS".len() as i32 + cells as i32 / 2;
+
+    idle(&mut s, IDLE_HIDE + 0.5);
+    // You cannot aim at a control you cannot see...
+    assert!(s.level_at(track, row, W, H).is_none());
+    assert!(!s.hovering(track, row, W, H));
+    // ...but the cell is still remembered, so a click there brings it back.
+    assert!(
+        s.footprint(track, row, W, H),
+        "the old bar's position should still be recognised"
+    );
+    s.touch();
+    assert!(s.visible());
+    assert!(s.level_at(track, row, W, H).is_some());
+}
+
+#[test]
+fn the_fade_is_graded_rather_than_a_blink() {
+    // If it snapped off in one frame it would strobe against the eye. Sample
+    // across the fade and the brightness has to decrease every step.
+    let mut s = Slider::new(0.9);
+    idle(&mut s, IDLE_HIDE);
+
+    let (_, row, _) = Slider::layout(W, H).unwrap();
+    // Brightest cell of the bar's row, i.e. how present the bar currently is.
+    let lum = |s: &Slider| {
+        let mut f = Frame::new(W, H);
+        s.draw(&mut f, W, H, false);
+        (0..f.w as i32)
+            .map(|x| f.get(x, row).fg.map_or(0u8, |c| c.0.max(c.1).max(c.2)))
+            .max()
+            .unwrap_or(0)
+    };
+
+    let first = lum(&s);
+    let mut prev = first;
+    let mut steps = 0;
+    while s.visible() {
+        s.update(1.0 / 60.0, false);
+        let now = lum(&s);
+        assert!(
+            now <= prev,
+            "the bar should only get dimmer while fading: {prev} -> {now}"
+        );
+        prev = now;
+        steps += 1;
+        assert!(steps < 100, "the fade should finish, not crawl");
+    }
+    assert!(steps >= 2, "the fade should take more than one frame");
+    assert!(first > 0, "the bar should start out visible");
+    assert!(
+        prev <= 3,
+        "and end up indistinguishable from the void, got {prev}"
+    );
 }
 
 #[test]

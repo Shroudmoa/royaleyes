@@ -56,7 +56,7 @@ fn main() {
     });
     while let Some(target) = wanted.peek().copied() {
         while t < target {
-            slider.update(1.0 / FPS);
+            slider.update(1.0 / FPS, false);
             eye.gain = slider.level();
             eye.update(
                 1.0 / FPS,

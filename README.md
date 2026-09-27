@@ -39,6 +39,13 @@ the frame is coming apart, and it turns from green at the bottom to red at the
 top. Clicking a track cell sets the level to that point; the far ends reach 0.0
 and 1.0 exactly.
 
+It fades out after three seconds without a change, so it stops sitting under the
+eye for the rest of the run, and fades back in the moment you touch the fader.
+Keeping the pointer on it also holds it up — it will not dissolve from under your
+cursor. While it is faded out a click where it used to be brings it back rather
+than counting as a poke at the eye, but it does not move the level: the click
+after that does.
+
 At peaceful the eye still blinks and still follows the mouse — it just stops
 coming apart. It is calmer, not dead.
 
@@ -67,9 +74,11 @@ background, which is what makes it legible at small sizes.
   `sqrt(1-x²)`-ish curves in a normalised frame; they squeeze together for a
   blink but never fully collapse, and a minimum-aperture floor keeps the
   corners of the almond inside the frame when they go sub-cell.
-- `src/chaos.rs` — the fader: level, the bar's layout, and the click-to-set
-  mapping. The track is a ramp across its whole length, so both ends are
-  exactly reachable.
+- `src/chaos.rs` — the fader: level, the bar's layout, the click-to-set mapping,
+  and the idle fade. The track is a ramp across its whole length, so both ends
+  are exactly reachable. Hit-testing is gated on the bar being up, so a faded-out
+  control cannot be aimed at, but its old footprint is still remembered so a
+  click there can wake it.
 - `src/glitch.rs` — the interference layer, applied on top of a finished frame.
   Everything is chaos-gated, so at `chaos = 0` the eye is completely clean.
 - `src/frame.rs` — the cell buffer and a diffing writer, so only cells that
@@ -101,10 +110,16 @@ stays clamped, and nothing panics on a 1x1 terminal.
 
 `tests/slider.rs` covers the fader: the level clamps at both ends, a key press
 moves it exactly one step, the track maps clicks monotonically with 0 and 1
-exactly reachable, the brackets around it are not part of it, it always fits
-the width it is drawn into, and — the one worth having — the eye is provably
-silent at zero gain, provably no louder than promised at full gain, and
-provably ordered in between.
+exactly reachable, the brackets around it are not part of it, and it always fits
+the width it is drawn into. The idle fade gets its own group — it is up at
+startup, still up a moment before the deadline, gone after it, brought back by a
+change (or by a press that lands on the value it was already at, because
+somebody holding `+` against the top of the range is still using the control),
+held up by the pointer, painted not at all once it has gone, and dimming
+monotonically over more than one frame rather than blinking out.
+
+Then the part that matters: the eye is provably silent at zero gain, provably no
+louder than promised at full gain, and provably ordered in between.
 
 The renderer is a library, so frames can be generated without a terminal:
 
