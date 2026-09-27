@@ -3,7 +3,10 @@
 //!
 //! Pass a second argument to pick the timestamps to capture, and a third to
 //! also dump the raw cell grid (`bg fg ch` per cell) for pixel-exact review.
+//! A fourth of `clean` renders the eye without the interference or the bar,
+//! which is how you debug the geometry.
 
+use glitch_eye::chaos::Slider;
 use glitch_eye::color::Rgb;
 use glitch_eye::eye::Eye;
 use glitch_eye::frame::{Cell, Frame};
@@ -13,6 +16,8 @@ use glitch_eye::rng::Rng;
 const W: usize = 100;
 const H: usize = 30;
 const FPS: f32 = 32.0;
+/// The fader position the program starts at. Kept in step with `main.rs`.
+const DEFAULT_GAIN: f32 = 0.55;
 
 fn main() {
     let path = std::env::args()
@@ -21,7 +26,8 @@ fn main() {
     let dump = std::env::args().nth(3);
 
     let mut rng = Rng::new(0xC0FFEE);
-    let mut eye = Eye::new(0.12);
+    let mut eye = Eye::new(DEFAULT_GAIN);
+    let mut slider = Slider::new(DEFAULT_GAIN);
     let mut frame = Frame::new(W, H);
     let mut html = String::with_capacity(1 << 22);
     html.push_str(
@@ -50,6 +56,8 @@ fn main() {
     });
     while let Some(target) = wanted.peek().copied() {
         while t < target {
+            slider.update(1.0 / FPS);
+            eye.gain = slider.level();
             eye.update(
                 1.0 / FPS,
                 &mut rng,
@@ -61,6 +69,9 @@ fn main() {
             if !clean {
                 glitch::apply(&mut frame, &mut rng, eye.chaos, t);
                 glitch::crt_drift(&mut frame, t, eye.chaos);
+                // After the interference, exactly as the running program does,
+                // so the still matches what you would see live.
+                slider.draw(&mut frame, W, H, false);
             }
             t += 1.0 / FPS;
             steps += 1;

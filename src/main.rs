@@ -12,6 +12,7 @@ use crossterm::event::{
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute, queue, terminal};
 
+use glitch_eye::chaos::Slider;
 use glitch_eye::color::Rgb;
 use glitch_eye::eye::Eye;
 use glitch_eye::frame::{Cell, Frame};
@@ -56,7 +57,7 @@ struct Options {
 }
 
 fn parse_args() -> Options {
-    let mut opts = Options { chaos: 0.18 };
+    let mut opts = Options { chaos: 0.55 };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -70,6 +71,9 @@ fn parse_args() -> Options {
                 println!("  move the mouse : the eye follows");
                 println!("  click / g      : force a glitch burst");
                 println!("  space / b      : blink");
+                println!("  up / down      : chaos, up to full meltdown");
+                println!("  p / c          : peaceful / chaos, straight there");
+                println!("  click the bar  : set the chaos level by hand");
                 println!("  q / Esc / C-c  : quit");
                 std::process::exit(0);
             }
@@ -89,9 +93,15 @@ fn main() -> io::Result<()> {
 
     let mut rng = Rng::from_entropy();
     let mut eye = Eye::new(opts.chaos);
+    // On a terminal too small for a bar, the fader still works by key; the bar
+    // itself just does not get drawn.
+    let mut slider = Slider::new(opts.chaos);
     let mut out = io::stdout();
     let mut prev: Vec<Cell> = Vec::new();
     let mut frame = Frame::new(80, 24);
+    // Where the pointer is, for the slider. Kept separately from `mouse` below,
+    // which is the gaze target and stops caring once the pointer goes quiet.
+    let mut pointer: Option<(i32, i32)> = None;
     let mut mouse: Option<(f32, f32)> = None;
     let mut mouse_moved_at = 0.0f32;
 
@@ -100,6 +110,10 @@ fn main() -> io::Result<()> {
     let mut t = 0.0f32;
 
     loop {
+        // Size first: both the gaze and the slider need to know where the
+        // pointer is relative to.
+        let (w, h) = terminal::size().map(|(w, h)| (w as usize, h as usize))?;
+
         // ---- input ------------------------------------------------------
         while event::poll(Duration::from_millis(0))? {
             match event::read()? {
@@ -110,22 +124,65 @@ fn main() -> io::Result<()> {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Char(' ') | KeyCode::Char('b') => eye.blink(),
                         KeyCode::Char('g') => eye.burst(&mut rng),
+                        // The chaos fader. Shift steps faster, so you can cross
+                        // the range without holding a key down.
+                        KeyCode::Up | KeyCode::Right => {
+                            slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
+                                4.0
+                            } else {
+                                1.0
+                            })
+                        }
+                        KeyCode::Down | KeyCode::Left => {
+                            slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
+                                -4.0
+                            } else {
+                                -1.0
+                            })
+                        }
+                        KeyCode::Char('=') | KeyCode::Char('+') => slider.adjust(1.0),
+                        KeyCode::Char('-') | KeyCode::Char('_') => slider.adjust(-1.0),
+                        KeyCode::Char('p') => slider.set(0.0),
+                        KeyCode::Char('c') => slider.set(1.0),
                         _ => {}
                     }
                 }
                 Event::Mouse(m) => match m.kind {
+                    // crossterm already reports 0-based cells for mouse events.
                     MouseEventKind::Moved | MouseEventKind::Drag(_) => {
                         mouse = Some((m.column as f32, m.row as f32));
                         mouse_moved_at = t;
+                        pointer = Some((m.column as i32, m.row as i32));
                     }
                     MouseEventKind::Down(_) => {
-                        eye.burst(&mut rng);
+                        let at = (m.column as i32, m.row as i32);
+                        pointer = Some(at);
+                        // A click on the bar sets the level; anywhere else it
+                        // is a poke. Getting the two confused would be
+                        // maddening, so the bar wins where it overlaps.
+                        match slider.level_at(at.0, at.1, w, h) {
+                            Some(v) => slider.set(v),
+                            None => eye.burst(&mut rng),
+                        }
                         if m.modifiers.contains(KeyModifiers::SHIFT) {
                             eye.blink();
                         }
                     }
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
-                        eye.burst(&mut rng);
+                        // Scrolling over the bar nudges the level, like every
+                        // other volume control in the world.
+                        let over = pointer
+                            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
+                            .unwrap_or(false);
+                        if over {
+                            slider.adjust(if m.kind == MouseEventKind::ScrollUp {
+                                1.0
+                            } else {
+                                -1.0
+                            });
+                        } else {
+                            eye.burst(&mut rng);
+                        }
                     }
                     _ => {}
                 },
@@ -139,7 +196,6 @@ fn main() -> io::Result<()> {
         last = now;
         t += dt;
 
-        let (w, h) = terminal::size().map(|(w, h)| (w as usize, h as usize))?;
         if w != frame.w || h != frame.h {
             frame.resize(w, h);
             prev.clear();
@@ -152,6 +208,8 @@ fn main() -> io::Result<()> {
         }
 
         // ---- simulate ------------------------------------------------------
+        slider.update(dt);
+        eye.gain = slider.level();
         eye.update(dt, &mut rng, mouse, w, h);
 
         // ---- render --------------------------------------------------------
@@ -163,6 +221,12 @@ fn main() -> io::Result<()> {
         } else {
             hint(&mut frame, t, w, h);
         }
+        // The bar goes on after the interference, so it stays readable however
+        // badly the frame is coming apart.
+        let hover = pointer
+            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
+            .unwrap_or(false);
+        slider.draw(&mut frame, w, h, hover);
         frame.present(&mut out, &mut prev, truecolor)?;
 
         // ---- pace ------------------------------------------------------------
@@ -199,12 +263,13 @@ fn too_small(frame: &mut Frame, t: f32) {
 
 fn hint(frame: &mut Frame, t: f32, w: usize, h: usize) {
     let left = HINT_SECONDS - t;
-    if left <= 0.0 || h < 3 {
+    if left <= 0.0 || h < 4 {
         return;
     }
-    let msg = " move mouse: look   click: glitch   space: blink   q: quit ";
+    let msg = " mouse: look   click: glitch   up/down: chaos   q: quit ";
     let start = ((w as i32 - msg.len() as i32) / 2).max(0);
-    let row = h as i32 - 1;
+    // Just above the slider, which owns the bottom row.
+    let row = h as i32 - 2;
     let fade = (left / 1.5).clamp(0.0, 1.0);
     let dim = 60.0 + 90.0 * fade;
     for (i, ch) in msg.chars().enumerate() {

@@ -35,6 +35,10 @@ const LASH_W: f32 = 1.15; // lash thickness, in square units (see `near_lid`)
 /// the almond drop out of the frame entirely.
 const MIN_GAP: f32 = 0.55;
 
+/// The interference driver's resting level, before `gain` is applied. Low
+/// enough to be calm, high enough that the eye never looks switched off.
+const REST: f32 = 0.18;
+
 pub struct Eye {
     pub t: f32,
     /// Eyelid aperture: 1 = wide open, 0 = squeezed shut.
@@ -51,9 +55,15 @@ pub struct Eye {
     /// Pupil radius as a fraction of the iris radius.
     pupil: f32,
     iris_hue: f32,
-    /// 0 = stable, 1 = full meltdown. Drives the glitch layer and the pupil.
+    /// What the glitch layer and the pupil actually see: `drive * gain`.
+    /// 0 = stable, 1 = full meltdown.
     pub chaos: f32,
-    base_chaos: f32,
+    /// The interference driver, before `gain`: it idles at [`REST`] and spikes
+    /// on its own. `gain` is the fader in front of it.
+    drive: f32,
+    /// Master volume, 0.0..=1.0. 0 leaves the eye completely alone, even
+    /// though the driver underneath is still running.
+    pub gain: f32,
     burst_wait: f32,
     /// Bumped every frame so hash-based noise animates.
     grain: i32,
@@ -61,7 +71,9 @@ pub struct Eye {
 }
 
 impl Eye {
-    pub fn new(base_chaos: f32) -> Eye {
+    /// `gain` is the starting position of the chaos fader, 0.0..=1.0.
+    pub fn new(gain: f32) -> Eye {
+        let gain = gain.clamp(0.0, 1.0);
         Eye {
             t: 0.0,
             open: 1.0,
@@ -74,8 +86,9 @@ impl Eye {
             dart_wait: 0.0,
             pupil: 0.36,
             iris_hue: 0.32,
-            chaos: base_chaos,
-            base_chaos,
+            chaos: REST * gain,
+            drive: REST,
+            gain,
             burst_wait: 0.8,
             grain: 0,
             following: false,
@@ -89,9 +102,13 @@ impl Eye {
         }
     }
 
-    /// Kick off a burst of interference.
+    /// Kick off a burst of interference. Manual bursts ignore `gain` in one
+    /// respect: the eye still flinches when you poke it, so a click is never
+    /// completely inert.
     pub fn burst(&mut self, rng: &mut Rng) {
-        self.chaos = (self.chaos + rng.range(0.35, 0.8)).min(1.0);
+        // A poke is scaled by the fader too, but never vanishes entirely.
+        let amt = 0.35 + 0.65 * self.gain;
+        self.drive = (self.drive + amt).min(1.0);
         self.burst_wait = rng.range(0.9, 2.6);
         self.tilt_target = rng.sym() * 0.30;
         self.iris_hue = fract(self.iris_hue + rng.sym() * 0.10);
@@ -172,12 +189,20 @@ impl Eye {
         );
 
         // --- interference --------------------------------------------------
+        // The driver always runs on its own; `gain` is only the fader on the
+        // output, so turning the chaos down does not stop the eye from having
+        // an opinion, it just stops that opinion reaching the screen.
         self.burst_wait -= dt;
         if self.burst_wait <= 0.0 {
             self.burst_wait = rng.range(0.9, 2.8);
-            self.chaos = (self.chaos + rng.range(0.30, 0.62)).min(1.0);
+            // A burst has to be able to carry the driver all the way to 1.0,
+            // otherwise pushing the fader to the top buys nothing and the bar
+            // is lying about the top of its range.
+            self.drive = (self.drive + rng.range(0.30, 0.95)).min(1.0);
         }
-        self.chaos = (self.chaos - dt * 0.55).max(self.base_chaos);
+        self.drive = (self.drive - dt * 0.55).max(REST);
+        self.gain = self.gain.clamp(0.0, 1.0);
+        self.chaos = (self.drive * self.gain).clamp(0.0, 1.0);
 
         // --- pupil, socket, iris --------------------------------------------
         // The pupil blows wide with panic, contracts when it locks on.

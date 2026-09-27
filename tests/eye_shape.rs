@@ -197,13 +197,18 @@ fn gaze_follows_the_mouse() {
 
 #[test]
 fn chaos_never_runs_away() {
-    let mut eye = Eye::new(0.0);
+    // At full gain the driver is free to spike as hard as it likes, but the
+    // level reaching the glitch layer must still stay in range.
+    let mut eye = Eye::new(1.0);
     let mut rng = Rng::new(11);
     for _ in 0..2000 {
         eye.update(1.0 / 32.0, &mut rng, Some((50.0, 15.0)), W, H);
         assert!((0.0..=1.0).contains(&eye.chaos), "chaos {}", eye.chaos);
     }
-    assert!(eye.chaos > 0.0, "chaos should never be fully off");
+    assert!(
+        eye.chaos > 0.0,
+        "the eye should never go fully quiet at full gain"
+    );
 }
 
 #[test]
