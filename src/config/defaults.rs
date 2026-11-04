@@ -37,13 +37,13 @@ pub fn keybinds() -> HashMap<Keybind, Action> {
 
 pub fn layout() -> Vec<FumWidget> {
     Vec::from([
-        FumWidget::CoverArt {
+        FumWidget::Eye {
             width: None,
             height: None,
-            border: false,
-            resize: CoverArtResize::Scale,
+            border: true,
             bg: None,
             fg: None,
+            chaos: Some(0.65),
         },
         FumWidget::Empty {
             size: 1,

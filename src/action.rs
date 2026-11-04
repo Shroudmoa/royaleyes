@@ -48,7 +48,13 @@ pub enum Action {
     Volume(VolumeType),
 
     Toggle(String, String, String),
-    Set(String, String)
+    Set(String, String),
+
+    EyeBurst,
+    EyeBlink,
+    EyeChaosUp,
+    EyeChaosDown,
+    EyeChaosSet(f32)
 }
 
 impl<'de> Deserialize<'de> for Action {
@@ -77,6 +83,11 @@ impl<'de> Deserialize<'de> for Action {
             "loop_track()"      => Ok(Action::LoopTrack),
             "loop_playlist()"   => Ok(Action::LoopPlaylist),
             "loop_cycle()"      => Ok(Action::LoopCycle),
+
+            "eye_burst()"       => Ok(Action::EyeBurst),
+            "eye_blink()"       => Ok(Action::EyeBlink),
+            "eye_chaos_up()"    => Ok(Action::EyeChaosUp),
+            "eye_chaos_down()"  => Ok(Action::EyeChaosDown),
 
             // forward() action
             a if FORWARD_RE.is_match(a) => {
@@ -276,6 +287,36 @@ impl Action {
                 // Just checks wether var exists, don't care about the value
                 if fum.state.vars.get(name).is_some() {
                     fum.state.vars.insert(name.to_string(), first.to_string());
+                }
+            },
+            Action::EyeBurst => {
+                fum.redraw = true;
+                if let Some(ev) = fum.state.eyevis.as_mut() {
+                    ev.eye.burst(&mut ev.rng);
+                }
+            },
+            Action::EyeBlink => {
+                fum.redraw = true;
+                if let Some(ev) = fum.state.eyevis.as_mut() {
+                    ev.eye.blink();
+                }
+            },
+            Action::EyeChaosUp => {
+                fum.redraw = true;
+                if let Some(ev) = fum.state.eyevis.as_mut() {
+                    ev.eye.gain = (ev.eye.gain + 0.05).clamp(0.0, 1.0);
+                }
+            },
+            Action::EyeChaosDown => {
+                fum.redraw = true;
+                if let Some(ev) = fum.state.eyevis.as_mut() {
+                    ev.eye.gain = (ev.eye.gain - 0.05).clamp(0.0, 1.0);
+                }
+            },
+            Action::EyeChaosSet(v) => {
+                fum.redraw = true;
+                if let Some(ev) = fum.state.eyevis.as_mut() {
+                    ev.eye.gain = (*v).clamp(0.0, 1.0);
                 }
             }
         }

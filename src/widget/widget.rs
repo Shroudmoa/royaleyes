@@ -256,8 +256,8 @@ impl FumWidget {
             },
             Self::Eye { width, height, .. } => {
                 match &state.parent_direction {
-                    Direction::Horizontal => width.map(|w| Constraint::Length(w)).unwrap_or(Constraint::Min(0)),
-                    Direction::Vertical => height.map(|h| Constraint::Length(h)).unwrap_or(Constraint::Min(0))
+                    Direction::Horizontal => width.map(|w| Constraint::Length(w)).unwrap_or(Constraint::Percentage(60)),
+                    Direction::Vertical => height.map(|h| Constraint::Length(h)).unwrap_or(Constraint::Percentage(70))
                 }
             },
             Self::Label { direction, .. } => {
