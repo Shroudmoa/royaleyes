@@ -1,136 +1,73 @@
-# glitch-eye
+<h3 align="center">
+  <img src="https://raw.githubusercontent.com/qxb3/fum/refs/heads/main/repo/logo.png" width="200"/>
+</h3>
 
-A single ASCII eye that watches your cursor and slowly comes apart.
+<h2 align="center">
+  fum: A fully customizable tui-based mpris music client.
+</h2>
 
-```
-$ cargo run --release
-```
+<p align="center">
+  fum is a tui-based mpris music client designed to provide a simple and efficient way to display and control your music within a tui interface.
+</p>
 
-The eye is drawn at whatever size your terminal is: 24-bit colour if
-`COLORTERM` advertises it, xterm-256 otherwise. It follows the mouse, blinks
-on its own, and every few seconds a burst of interference rolls through —
-banded RGB splits, row tears, block warps, scanline roll, a CRT brightness
-ripple.
+# ❗❗ IMPORTANT ❗❗
+> ⚠️ **Currently in a full codebase rewrite**
+> See [#98](https://github.com/qxb3/fum/issues/98) for the motivations on why. Though you can still use fum as it is.
 
-There is a fader along the bottom, so you decide how much of that you want.
-It runs from peaceful to chaos, and it is the only thing standing between you
-and a completely still eye.
 
-```
- CHAOS [████████████▏░░░░░░░░░] 0.55
-```
+<p align="center">
+  <a href="https://discord.gg/UfXMeyZ6Zt">
+    <img src="https://img.shields.io/discord/1331325131649454184?style=for-the-badge&logo=discord&logoColor=%23ffffff&label=discord&labelColor=1C1B22&color=DEFEDF" />
+  </a>
 
-## Controls
+  <a href="https://github.com/qxb3/fum/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/MIT-DEFEDF?style=for-the-badge&logo=Pinboard&label=License&labelColor=1C1B22" />
+  </a>
 
-| Input | Effect |
-| --- | --- |
-| move the mouse | the eye looks at it (gives up after 2.5s and starts looking around on its own) |
-| click | glitch burst — or sets the level, if you click the bar |
-| scroll over the bar | nudge the chaos level |
-| `g` | glitch burst |
-| `space` / `b` | blink |
-| `up` / `down` / `right` / `left` | chaos up / down (hold `shift` to move faster) |
-| `+` / `-` | chaos up / down |
-| `p` / `c` | peaceful / chaos, straight there |
-| `q` / `Esc` / `Ctrl-C` | quit |
+  <a href="https://github.com/qxb3/fum/stargazers">
+    <img src="https://img.shields.io/github/stars/qxb3/fum?style=for-the-badge&logo=Apache%20Spark&logoColor=ffffff&labelColor=1C1B22&color=DEFEDF" />
+  </a>
+</p>
 
-The bar is drawn *after* the interference, so it stays readable however badly
-the frame is coming apart, and it turns from green at the bottom to red at the
-top. Clicking a track cell sets the level to that point; the far ends reach 0.0
-and 1.0 exactly.
+## Demo
 
-It fades out after three seconds without a change, so it stops sitting under the
-eye for the rest of the run, and fades back in the moment you touch the fader.
-Keeping the pointer on it also holds it up — it will not dissolve from under your
-cursor. While it is faded out a click where it used to be brings it back rather
-than counting as a poke at the eye, but it does not move the level: the click
-after that does.
+<img
+  width="800px"
+  src="https://github.com/user-attachments/assets/930283d8-6299-4ef9-865b-26960dcee866"
+/>
 
-At peaceful the eye still blinks and still follows the mouse — it just stops
-coming apart. It is calmer, not dead.
+## Installation
 
-The first few seconds show a fading hint just above the bar. Under 30x8 the eye
-asks for a bigger terminal instead, and below about 19 columns wide there is no
-room for the bar, so the fader falls back to the keys.
+[![Packaging status](https://repology.org/badge/vertical-allrepos/fum.svg)](https://repology.org/project/fum/versions)
 
-## Options
+## Build from source
 
-```
---chaos <0.0..1.0>   where the fader starts (default 0.55)
--h, --help
+```bash
+git clone https://github.com/qxb3/fum.git
+cd fum
+cargo build --release
+# Either copy/move `target/release/yum` to /usr/bin
+# Or add the release path to your system's path
+# Moving fum binary to /usr/bin
+mv target/release/fum /usr/bin
 ```
 
-This only sets the *starting position*: the bar is there to be moved, and the
-level you leave it at is not written anywhere.
+### Configuring
 
-## How it is put together
+See [Wiki](https://github.com/qxb3/fum/wiki/Configuring)
 
-The eye is a hybrid: the *background colour* of each cell carries the tone and
-the *glyph* carries the texture. Iris fibres, stipple, blood vessels and the
-lash line are drawn as characters, but the light and dark come from the
-background, which is what makes it legible at small sizes.
+### Need help?
 
-- `src/eye.rs` — lid geometry, sclera, iris, specular hits. The lids are
-  `sqrt(1-x²)`-ish curves in a normalised frame; they squeeze together for a
-  blink but never fully collapse, and a minimum-aperture floor keeps the
-  corners of the almond inside the frame when they go sub-cell.
-- `src/chaos.rs` — the fader: level, the bar's layout, the click-to-set mapping,
-  and the idle fade. The track is a ramp across its whole length, so both ends
-  are exactly reachable. Hit-testing is gated on the bar being up, so a faded-out
-  control cannot be aimed at, but its old footprint is still remembered so a
-  click there can wake it.
-- `src/glitch.rs` — the interference layer, applied on top of a finished frame.
-  Everything is chaos-gated, so at `chaos = 0` the eye is completely clean.
-- `src/frame.rs` — the cell buffer and a diffing writer, so only cells that
-  actually changed get written to the terminal each frame.
-- `src/color.rs` — 24-bit to xterm-256 fallback.
-- `src/rng.rs` — a small xorshift PRNG, so the animation is reproducible from
-  a seed. `src/util.rs` has the value noise and easing helpers.
+Join [Discord Server!](https://discord.gg/UfXMeyZ6Zt).
 
-The eye runs its own interference driver regardless of where the fader is: it
-idles at a low level and spikes on its own. The fader is a gain on the *output*
-of that, not a throttle on the driver. So turning the chaos down does not stop
-the eye having an opinion, it just stops that opinion reaching the screen — and
-turning it back up releases whatever the driver was doing while it was quiet.
+## Showcase on a rice
 
-Only dependency is `crossterm`.
+<img src="https://github.com/qxb3/fum/blob/main/repo/showcase.png" />
 
-## Development
+## Contributing
 
-```
-cargo test                    # structural tests: is it shaped like an eye?
-cargo clippy --all-targets
-```
+[CONTRIBUTING](https://github.com/qxb3/fum/blob/main/CONTRIBUTING.md)
 
-`tests/eye_shape.rs` checks the things that are easy to break silently: the
-eye stays centred and wider than it is tall, the lids taper towards the corners,
-there is a bright sclera, a dark pupil and a visible iris, a blink squashes the
-height without moving or narrowing the eye, the iris tracks the mouse, chaos
-stays clamped, and nothing panics on a 1x1 terminal.
+## LICENSE
 
-`tests/slider.rs` covers the fader: the level clamps at both ends, a key press
-moves it exactly one step, the track maps clicks monotonically with 0 and 1
-exactly reachable, the brackets around it are not part of it, and it always fits
-the width it is drawn into. The idle fade gets its own group — it is up at
-startup, still up a moment before the deadline, gone after it, brought back by a
-change (or by a press that lands on the value it was already at, because
-somebody holding `+` against the top of the range is still using the control),
-held up by the pointer, painted not at all once it has gone, and dimming
-monotonically over more than one frame rather than blinking out.
-
-Then the part that matters: the eye is provably silent at zero gain, provably no
-louder than promised at full gain, and provably ordered in between.
-
-The renderer is a library, so frames can be generated without a terminal:
-
-```
-cargo run --example snapshot -- out.html                        # a spread of frames as HTML
-cargo run --example snapshot -- out.html 1.0,4.1 clean           # just those two, no glitch
-cargo run --example snapshot -- out.html 12.0 cells.txt          # a raw cell dump as well
-cargo run --example slider_preview -- bar.html                   # the bar alone, many widths
-cargo run --example gain_preview -- gain.html                    # the eye + bar, many levels
-```
-
-The dump is one line per row, tab separated, `<bg hex><fg hex><glyph>` per
-cell, with a blank line between frames — useful for reviewing the exact output
-without relying on your terminal's colour support.
+[MIT](https://github.com/qxb3/fum/blob/main/LICENSE)
