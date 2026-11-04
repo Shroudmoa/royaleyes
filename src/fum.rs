@@ -63,12 +63,10 @@ impl<'a> Fum<'a> {
 
     pub fn run(&mut self) -> FumResult<()> {
         while !self.exit {
-            if self.redraw {
-                self.terminal.draw(|frame| {
-                    self.ui.draw(frame, &mut self.state);
-                    self.redraw = false;
-                })?;
-            }
+            self.terminal.draw(|frame| {
+                self.ui.draw(frame, &mut self.state);
+                self.redraw = false;
+            })?;
 
             self.update_meta();
             self.term_events()?;
