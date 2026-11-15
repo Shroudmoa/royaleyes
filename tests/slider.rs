@@ -2,10 +2,10 @@
 //! mapping agree, turning the gain down actually silences the eye, and the bar
 //! gets out of the way when nobody is using it.
 
-use glitch_eye::chaos::{Slider, IDLE_HIDE, STEP};
-use glitch_eye::eye::Eye;
-use glitch_eye::frame::Frame;
-use glitch_eye::rng::Rng;
+use royaleyes::chaos::{Slider, IDLE_HIDE, STEP};
+use royaleyes::eye::Eye;
+use royaleyes::frame::Frame;
+use royaleyes::rng::Rng;
 
 const W: usize = 100;
 const H: usize = 30;
@@ -189,7 +189,7 @@ fn the_bar_is_not_drawn_once_it_has_gone() {
     // Once hidden it must not paint a single cell. The eye repaints the frame
     // underneath, so anything left here would linger as a ghost.
     idle(&mut s, IDLE_HIDE + 0.5);
-    f.cells.fill(glitch_eye::frame::Cell::default());
+    f.cells.fill(royaleyes::frame::Cell::default());
     s.draw(&mut f, W, H, false);
     assert!(!bar_painted(&f), "a hidden bar should leave the row alone");
 }

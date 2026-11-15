@@ -1,11 +1,11 @@
 //! Structural tests: these check the eye actually comes out shaped like an eye
 //! rather than merely "not panicking".
 
-use glitch_eye::color::Rgb;
-use glitch_eye::eye::Eye;
-use glitch_eye::frame::Frame;
-use glitch_eye::glitch;
-use glitch_eye::rng::Rng;
+use royaleyes::color::Rgb;
+use royaleyes::eye::Eye;
+use royaleyes::frame::Frame;
+use royaleyes::glitch;
+use royaleyes::rng::Rng;
 
 const W: usize = 100;
 const H: usize = 30;
@@ -220,7 +220,7 @@ fn glitch_layer_survives_extremes() {
         for t in [0.0, 3.3, 17.75] {
             eye.draw(&mut f, &mut rng);
             assert_eq!(f.cells.len(), W * H);
-            glitch::apply(&mut f, &mut rng, chaos, t);
+            glitch::apply(&mut f, &mut rng, chaos, t, false);
             glitch::crt_drift(&mut f, t, chaos);
             assert_eq!(f.cells.len(), W * H);
             // Nothing may write outside the buffer or emit an invalid colour.
@@ -240,7 +240,7 @@ fn degenerate_terminal_sizes_do_not_panic() {
     for (w, h) in [(1, 1), (2, 1), (1, 40), (8, 4), (5, 5), (200, 3)] {
         let mut f = Frame::new(w, h);
         eye.draw(&mut f, &mut rng);
-        glitch::apply(&mut f, &mut rng, 0.9, 2.0);
+        glitch::apply(&mut f, &mut rng, 0.9, 2.0, false);
         glitch::crt_drift(&mut f, 2.0, 0.9);
         assert_eq!(f.cells.len(), w * h);
     }
@@ -248,7 +248,7 @@ fn degenerate_terminal_sizes_do_not_panic() {
 
 #[test]
 fn set_ignores_out_of_bounds() {
-    use glitch_eye::frame::Cell;
+    use royaleyes::frame::Cell;
     let mut f = Frame::new(4, 3);
     let paint = Cell::solid(Rgb(1, 2, 3));
     f.set(-1, 0, paint);

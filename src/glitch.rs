@@ -11,8 +11,10 @@ const NOISE_CHARS: [char; 30] = [
     '^', '~', '`', '1', '0', '?', ';', ':', '.', ',', '"',
 ];
 
-/// Apply one frame of glitching. `chaos` is 0..1.
-pub fn apply(f: &mut Frame, rng: &mut Rng, chaos: f32, t: f32) {
+/// Apply one frame of glitching. `chaos` is 0..1 (the eye's interference
+/// level, already scaled by the active state's intensity), `red` switches the
+/// interference to the red accent of an alert-style state.
+pub fn apply(f: &mut Frame, rng: &mut Rng, chaos: f32, t: f32, red: bool) {
     let (w, h) = (f.w, f.h);
     if w < 6 || h < 3 {
         return;
@@ -27,7 +29,7 @@ pub fn apply(f: &mut Frame, rng: &mut Rng, chaos: f32, t: f32) {
     row_tear(f, &src, rng, chaos, w, h);
     block_warp(f, &src, rng, chaos, w, h);
     scanline_roll(f, rng, chaos, t, w, h);
-    static_noise(f, rng, chaos, n_cells, w, h);
+    static_noise(f, rng, chaos, n_cells, w, h, red);
 }
 
 #[inline]
@@ -183,9 +185,22 @@ fn scanline_roll(f: &mut Frame, rng: &mut Rng, chaos: f32, t: f32, w: usize, h: 
 }
 
 /// Grain, and the occasional shredded row of pure static.
-fn static_noise(f: &mut Frame, rng: &mut Rng, chaos: f32, n_cells: f32, w: usize, h: usize) {
+fn static_noise(
+    f: &mut Frame,
+    rng: &mut Rng,
+    chaos: f32,
+    n_cells: f32,
+    w: usize,
+    h: usize,
+    red: bool,
+) {
     // A permanent dusting of single-cell corruption: this is the "always
     // glitching" baseline.
+    let (n_r, n_g, n_b, n_br, n_bg, n_bb) = if red {
+        (255.0, 80.0, 70.0, 60.0, 12.0, 16.0)
+    } else {
+        (120.0, 255.0, 210.0, 120.0, 255.0, 210.0)
+    };
     let n = (n_cells * 0.0035 * (0.35 + chaos * 1.4)) as i32;
     for _ in 0..n {
         let c = rng.i(0, w as i32);
@@ -194,15 +209,15 @@ fn static_noise(f: &mut Frame, rng: &mut Rng, chaos: f32, n_cells: f32, w: usize
         f.cells[r as usize * w + c as usize] = Cell {
             ch: *rng.pick(&NOISE_CHARS),
             fg: Some(Rgb(
-                (120.0 * bright) as u8,
-                (255.0 * bright) as u8,
-                (210.0 * bright) as u8,
+                (n_r * bright) as u8,
+                (n_g * bright) as u8,
+                (n_b * bright) as u8,
             )),
             bg: if rng.chance(0.35) {
                 Some(Rgb(
-                    (8.0 * bright) as u8,
-                    (10.0 * bright) as u8,
-                    (16.0 * bright) as u8,
+                    (n_br * bright) as u8,
+                    (n_bg * bright) as u8,
+                    (n_bb * bright) as u8,
                 ))
             } else {
                 None
@@ -225,13 +240,13 @@ fn static_noise(f: &mut Frame, rng: &mut Rng, chaos: f32, n_cells: f32, w: usize
                     ch: *rng.pick(&NOISE_CHARS),
                     fg: Some(Rgb(
                         (255.0 * bright) as u8,
-                        (255.0 * bright) as u8,
-                        (255.0 * bright) as u8,
+                        if red { (90.0 * bright) as u8 } else { (255.0 * bright) as u8 },
+                        if red { (70.0 * bright) as u8 } else { (255.0 * bright) as u8 },
                     )),
                     bg: Some(Rgb(
-                        (14.0 * bright) as u8,
-                        (16.0 * bright) as u8,
-                        (24.0 * bright) as u8,
+                        if red { (70.0 * bright) as u8 } else { (14.0 * bright) as u8 },
+                        if red { (12.0 * bright) as u8 } else { (16.0 * bright) as u8 },
+                        if red { (18.0 * bright) as u8 } else { (24.0 * bright) as u8 },
                     )),
                 };
             }

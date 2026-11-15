@@ -6,12 +6,12 @@
 //! A fourth of `clean` renders the eye without the interference or the bar,
 //! which is how you debug the geometry.
 
-use glitch_eye::chaos::Slider;
-use glitch_eye::color::Rgb;
-use glitch_eye::eye::Eye;
-use glitch_eye::frame::{Cell, Frame};
-use glitch_eye::glitch;
-use glitch_eye::rng::Rng;
+use royaleyes::chaos::Slider;
+use royaleyes::color::Rgb;
+use royaleyes::eye::Eye;
+use royaleyes::frame::{Cell, Frame};
+use royaleyes::glitch;
+use royaleyes::rng::Rng;
 
 const W: usize = 100;
 const H: usize = 30;
@@ -67,7 +67,7 @@ fn main() {
             );
             eye.draw(&mut frame, &mut rng);
             if !clean {
-                glitch::apply(&mut frame, &mut rng, eye.chaos, t);
+                glitch::apply(&mut frame, &mut rng, eye.chaos, t, false);
                 glitch::crt_drift(&mut frame, t, eye.chaos);
                 // After the interference, exactly as the running program does,
                 // so the still matches what you would see live.

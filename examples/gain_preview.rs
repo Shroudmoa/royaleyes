@@ -2,11 +2,11 @@
 //! the fader can be reviewed in context. `cargo run --example gain_preview --
 //! out.html`
 
-use glitch_eye::chaos::Slider;
-use glitch_eye::eye::Eye;
-use glitch_eye::frame::Frame;
-use glitch_eye::glitch;
-use glitch_eye::rng::Rng;
+use royaleyes::chaos::Slider;
+use royaleyes::eye::Eye;
+use royaleyes::frame::Frame;
+use royaleyes::glitch;
+use royaleyes::rng::Rng;
 
 const W: usize = 100;
 const H: usize = 30;
@@ -34,7 +34,7 @@ fn main() {
         let mut frame = Frame::new(W, H);
         let mut t = 0.0f32;
         let mut peak = 0.0f32;
-        let mut peak_cells: Option<Vec<glitch_eye::frame::Cell>> = None;
+        let mut peak_cells: Option<Vec<royaleyes::frame::Cell>> = None;
 
         // Run a while, then keep the loudest frame: the rest level is calm, so
         // a single arbitrary still would not show what the fader does.
@@ -49,7 +49,7 @@ fn main() {
                 H,
             );
             eye.draw(&mut frame, &mut rng);
-            glitch::apply(&mut frame, &mut rng, eye.chaos, t);
+            glitch::apply(&mut frame, &mut rng, eye.chaos, t, false);
             glitch::crt_drift(&mut frame, t, eye.chaos);
             // `>=` on the first frame matters: at gain 0 chaos is always 0, so
             // a strict comparison would never record anything at all.
@@ -84,8 +84,8 @@ fn main() {
     println!("wrote {path}");
 }
 
-fn push_span(html: &mut String, cell: glitch_eye::frame::Cell) {
-    use glitch_eye::color::Rgb;
+fn push_span(html: &mut String, cell: royaleyes::frame::Cell) {
+    use royaleyes::color::Rgb;
     let fg = cell.fg.unwrap_or(Rgb(200, 200, 200));
     let bg = cell.bg.unwrap_or(Rgb(8, 8, 14));
     html.push_str(&format!(

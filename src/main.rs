@@ -1,4 +1,4 @@
-//! glitch-eye: an ASCII eye that watches your cursor and slowly comes apart.
+//! RoyalEyes: an ASCII eye that watches your cursor and slowly comes apart.
 //!
 //! Run with `cargo run --release`. `q` or `Esc` to leave.
 
@@ -12,12 +12,15 @@ use crossterm::event::{
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute, queue, terminal};
 
-use glitch_eye::chaos::Slider;
-use glitch_eye::color::Rgb;
-use glitch_eye::eye::Eye;
-use glitch_eye::frame::{Cell, Frame};
-use glitch_eye::glitch;
-use glitch_eye::rng::Rng;
+use royaleyes::chaos::Slider;
+use royaleyes::color::Rgb;
+use royaleyes::config::{self, Config};
+use royaleyes::eye::Eye;
+use royaleyes::frame::{Cell, Frame};
+use royaleyes::glitch;
+use royaleyes::menu::Menu;
+use royaleyes::rng::Rng;
+use royaleyes::startup;
 
 const FPS: f32 = 32.0;
 const HINT_SECONDS: f32 = 7.0;
@@ -33,6 +36,7 @@ impl TerminalGuard {
         execute!(
             out,
             terminal::EnterAlternateScreen,
+            terminal::SetTitle("RoyalEyes"),
             cursor::Hide,
             EnableMouseCapture,
             terminal::Clear(terminal::ClearType::All)
@@ -52,50 +56,21 @@ impl Drop for TerminalGuard {
         );
     }
 }
-struct Options {
-    chaos: f32,
-}
-
-fn parse_args() -> Options {
-    let mut opts = Options { chaos: 0.55 };
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--chaos" => {
-                if let Some(v) = args.next().and_then(|v| v.parse::<f32>().ok()) {
-                    opts.chaos = v.clamp(0.0, 1.0);
-                }
-            }
-            "-h" | "--help" => {
-                println!("glitch-eye [--chaos <0.0..1.0>]");
-                println!("  move the mouse : the eye follows");
-                println!("  click / g      : force a glitch burst");
-                println!("  space / b      : blink");
-                println!("  up / down      : chaos, up to full meltdown");
-                println!("  p / c          : peaceful / chaos, straight there");
-                println!("  click the bar  : set the chaos level by hand");
-                println!("  q / Esc / C-c  : quit");
-                std::process::exit(0);
-            }
-            _ => {}
-        }
-    }
-    opts
-}
 
 fn main() -> io::Result<()> {
-    let opts = parse_args();
+    let opts = royaleyes::cli::parse_args(std::env::args().skip(1));
     let _guard = TerminalGuard::enter()?;
 
-    let truecolor = std::env::var("COLORTERM")
-        .map(|v| v.contains("truecolor") || v.contains("24bit"))
-        .unwrap_or(false);
+    let cfg = config::load();
+    // Explicit CLI flags win over the saved configuration.
+    let chaos = opts.chaos.unwrap_or(cfg.chaos);
+    let state = opts.state.unwrap_or(cfg.state);
+    let startup_anim = opts.startup.unwrap_or(cfg.startup);
 
     let mut rng = Rng::from_entropy();
-    let mut eye = Eye::new(opts.chaos);
-    // On a terminal too small for a bar, the fader still works by key; the bar
-    // itself just does not get drawn.
-    let mut slider = Slider::new(opts.chaos);
+    let mut eye = Eye::new(chaos);
+    eye.set_state(state);
+    let mut menu = Menu::new();
     let mut out = io::stdout();
     let mut prev: Vec<Cell> = Vec::new();
     let mut frame = Frame::new(80, 24);
@@ -105,9 +80,19 @@ fn main() -> io::Result<()> {
     let mut mouse: Option<(f32, f32)> = None;
     let mut mouse_moved_at = 0.0f32;
 
+    let mut slider = Slider::new(chaos);
     let start = Instant::now();
     let mut last = start;
     let mut t = 0.0f32;
+    let truecolor = std::env::var("COLORTERM")
+        .map(|v| v.contains("truecolor") || v.contains("24bit"))
+        .unwrap_or(false);
+    // The wake-up sequence; `None` once the eye has settled.
+    let mut init: Option<Instant> = if startup_anim {
+        Some(Instant::now())
+    } else {
+        None
+    };
 
     loop {
         // Size first: both the gaze and the slider need to know where the
@@ -120,26 +105,53 @@ fn main() -> io::Result<()> {
                 Event::Key(k) if k.kind != KeyEventKind::Release => {
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
                     match k.code {
-                        KeyCode::Char('c') if ctrl => return Ok(()),
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('c') if ctrl => {
+                            let _ = persist(&slider, &eye, startup_anim);
+                            return Ok(());
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            if menu.is_open() && k.code == KeyCode::Esc {
+                                menu.close();
+                            } else {
+                                let _ = persist(&slider, &eye, startup_anim);
+                                return Ok(());
+                            }
+                        }
+                        KeyCode::Char('m') => menu.toggle(eye.state),
+                        KeyCode::Enter => {
+                            if menu.is_open() {
+                                let s = menu.selected();
+                                eye.set_state(s);
+                                menu.close();
+                                let _ = persist(&slider, &eye, startup_anim);
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Right => {
+                            if menu.is_open() {
+                                menu.select_next();
+                            } else {
+                                slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
+                                    4.0
+                                } else {
+                                    1.0
+                                });
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Left => {
+                            if menu.is_open() {
+                                menu.select_prev();
+                            } else {
+                                slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
+                                    -4.0
+                                } else {
+                                    -1.0
+                                });
+                            }
+                        }
                         KeyCode::Char(' ') | KeyCode::Char('b') => eye.blink(),
                         KeyCode::Char('g') => eye.burst(&mut rng),
                         // The chaos fader. Shift steps faster, so you can cross
                         // the range without holding a key down.
-                        KeyCode::Up | KeyCode::Right => {
-                            slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
-                                4.0
-                            } else {
-                                1.0
-                            })
-                        }
-                        KeyCode::Down | KeyCode::Left => {
-                            slider.adjust(if k.modifiers.contains(KeyModifiers::SHIFT) {
-                                -4.0
-                            } else {
-                                -1.0
-                            })
-                        }
                         KeyCode::Char('=') | KeyCode::Char('+') => slider.adjust(1.0),
                         KeyCode::Char('-') | KeyCode::Char('_') => slider.adjust(-1.0),
                         KeyCode::Char('p') => slider.set(0.0),
@@ -217,28 +229,40 @@ fn main() -> io::Result<()> {
             mouse = None;
         }
 
-        // ---- simulate ------------------------------------------------------
-        // Whether the pointer is over the bar decides both how it looks and
-        // whether it counts as being used, so work that out before updating.
-        let hover = pointer
-            .map(|(cx, cy)| slider.hovering(cx, cy, w, h))
-            .unwrap_or(false);
-        slider.update(dt, hover);
-        eye.gain = slider.level();
-        eye.update(dt, &mut rng, mouse, w, h);
+        let hover = pointer.map(|(cx, cy)| slider.hovering(cx, cy, w, h)).unwrap_or(false);
+
+        // ---- simulation / startup phase ----------------------------------
+        if init.is_some() {
+            // The eye is waking up: lid separation and chaos ease towards
+            // their settled values.
+            let init_start = init.unwrap_or_else(Instant::now);
+            let pe = startup::ease((now - init_start).as_secs_f32());
+            eye.gain = chaos * pe;
+            eye.update(dt, &mut rng, None, w, h);
+            // Materialize from a shut eye up to the aperture the target state
+            // asks for, so a configured state still gets its wider opening.
+            eye.open = pe * eye.target_open();
+            if pe >= 1.0 {
+                init = None;
+            }
+        } else {
+            slider.update(dt, hover);
+            eye.gain = slider.level();
+            eye.update(dt, &mut rng, mouse, w, h);
+        }
 
         // ---- render --------------------------------------------------------
         eye.draw(&mut frame, &mut rng);
-        glitch::apply(&mut frame, &mut rng, eye.chaos, t);
-        glitch::crt_drift(&mut frame, t, eye.chaos);
+        glitch::apply(&mut frame, &mut rng, eye.interference(), t, eye.red());
+        glitch::crt_drift(&mut frame, t, eye.interference());
         if w < 30 || h < 8 {
             too_small(&mut frame, t);
-        } else {
+        } else if init.is_none() && !menu.is_open() {
             hint(&mut frame, t, w, h);
         }
-        // The bar goes on after the interference, so it stays readable however
-        // badly the frame is coming apart. It stops being drawn entirely once
-        // it has gone idle, which leaves the eye on its own.
+        if menu.is_open() {
+            menu.draw(&mut frame, eye.state);
+        }
         slider.draw(&mut frame, w, h, hover);
         frame.present(&mut out, &mut prev, truecolor)?;
 
@@ -251,7 +275,16 @@ fn main() -> io::Result<()> {
     }
 }
 
-/// The terminal is too cramped to draw an eye in.
+/// Persist the preferences we just ran with, before leaving.
+fn persist(slider: &Slider, eye: &Eye, startup: bool) -> std::io::Result<()> {
+    let cfg = Config {
+        chaos: slider.level(),
+        state: eye.state,
+        startup,
+    };
+    cfg.save()
+}
+
 fn too_small(frame: &mut Frame, t: f32) {
     let msg = "make me bigger";
     let col = (frame.w as i32 - msg.len() as i32) / 2;
@@ -279,7 +312,7 @@ fn hint(frame: &mut Frame, t: f32, w: usize, h: usize) {
     if left <= 0.0 || h < 4 {
         return;
     }
-    let msg = " mouse: look   click: glitch   up/down: chaos   q: quit ";
+    let msg = " mouse: look   click: glitch   up/down: chaos   m: menu   q: quit ";
     let start = ((w as i32 - msg.len() as i32) / 2).max(0);
     // Just above the slider, which owns the bottom row.
     let row = h as i32 - 2;

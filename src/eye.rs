@@ -8,6 +8,7 @@
 use crate::color::Rgb;
 use crate::frame::{Cell, Frame};
 use crate::rng::Rng;
+use crate::state::{EyeState, Profile};
 use crate::util::{clamp, fract, hash11, hash21, hsv, lerp, smoothstep, value_noise};
 
 /// Texture ramp, sparse -> dense. Background colour carries the tone, these
@@ -68,12 +69,19 @@ pub struct Eye {
     /// Bumped every frame so hash-based noise animates.
     grain: i32,
     following: bool,
+    /// The state the eye is in, and the behaviour profile it is easing through.
+    /// States cross-fade over [`super::state::TRANSITION`] rather than snapping.
+    pub state: EyeState,
+    state_t: f32,
+    state_dur: f32,
+    profile: Profile,
 }
 
 impl Eye {
     /// `gain` is the starting position of the chaos fader, 0.0..=1.0.
     pub fn new(gain: f32) -> Eye {
         let gain = gain.clamp(0.0, 1.0);
+        let profile = EyeState::Normal.profile();
         Eye {
             t: 0.0,
             open: 1.0,
@@ -92,7 +100,41 @@ impl Eye {
             burst_wait: 0.8,
             grain: 0,
             following: false,
+            state: EyeState::Normal,
+            state_t: 0.0,
+            state_dur: super::state::TRANSITION,
+            profile,
         }
+    }
+
+    /// Switch to another eye state; the change eases in over the transition.
+    pub fn set_state(&mut self, state: EyeState) {
+        if self.state != state {
+            self.state = state;
+            self.state_t = 0.0;
+        }
+    }
+
+    /// The behaviour currently in effect, mid-transition while a switch is
+    /// still easing.
+    pub fn behaviour(&self) -> Profile {
+        self.profile
+    }
+
+    /// The interference level after the current state's intensity multiplier.
+    pub fn interference(&self) -> f32 {
+        self.chaos * self.profile.glitch
+    }
+
+    /// Is the red accent currently in effect? During a transition the blend
+    /// settles on the new side halfway through.
+    pub fn red(&self) -> bool {
+        self.profile.red
+    }
+
+    /// The lid aperture the active state is heading for.
+    pub fn target_open(&self) -> f32 {
+        self.state.profile().open
     }
 
     /// Force a blink.
@@ -107,7 +149,8 @@ impl Eye {
     /// completely inert.
     pub fn burst(&mut self, rng: &mut Rng) {
         // A poke is scaled by the fader too, but never vanishes entirely.
-        let amt = 0.35 + 0.65 * self.gain;
+        // States scale it as well: an alert eye flinches harder than a calm one.
+        let amt = (0.35 + 0.65 * self.gain) * self.profile.burst;
         self.drive = (self.drive + amt).min(1.0);
         self.burst_wait = rng.range(0.9, 2.6);
         self.tilt_target = rng.sym() * 0.30;
@@ -126,6 +169,13 @@ impl Eye {
         self.t += dt;
         self.grain = self.grain.wrapping_add(1);
 
+        // --- state transition ----------------------------------------------
+        // Ease towards the profile of the active state. A switch restarts the
+        // blend, so behaviour shifts smoothly instead of snapping.
+        self.state_t = (self.state_t + dt).min(self.state_dur);
+        let k = smoothstep(0.0, 1.0, self.state_t / self.state_dur);
+        self.profile = self.profile.mix(self.state.profile(), k);
+
         // --- blinking -----------------------------------------------------
         self.blink_wait -= dt;
         if self.blink_t <= 0.0 && self.blink_wait <= 0.0 {
@@ -143,7 +193,7 @@ impl Eye {
             };
             self.open = v;
         } else {
-            self.open = lerp(self.open, 1.0, 1.0 - (-dt * 9.0).exp());
+            self.open = lerp(self.open, self.profile.open, 1.0 - (-dt * 9.0).exp());
         }
 
         // --- what are we looking at ----------------------------------------
@@ -161,7 +211,10 @@ impl Eye {
                 self.dart_wait -= dt;
                 if self.dart_wait <= 0.0 {
                     self.dart_wait = rng.range(0.3, 1.8);
-                    self.gaze_target = [rng.range(-GX, GX), rng.range(-GY * 0.85, GY)];
+                    self.gaze_target = [
+                        rng.range(-GX * self.profile.wander, GX * self.profile.wander),
+                        rng.range(-GY * self.profile.wander * 0.85, GY * self.profile.wander),
+                    ];
                 }
             }
         }
@@ -169,7 +222,7 @@ impl Eye {
         self.gaze_target[1] = clamp(self.gaze_target[1], -GY, GY);
 
         // Smooth pursuit, plus a fine tremor so it never sits perfectly still.
-        let rate = if self.following { 11.0 } else { 16.0 };
+        let rate = if self.following { self.profile.follow_rate } else { self.profile.dart_rate };
         let k = 1.0 - (-dt * rate).exp();
         let prev = self.gaze;
         self.gaze[0] = lerp(self.gaze[0], self.gaze_target[0], k);
@@ -198,9 +251,9 @@ impl Eye {
             // A burst has to be able to carry the driver all the way to 1.0,
             // otherwise pushing the fader to the top buys nothing and the bar
             // is lying about the top of its range.
-            self.drive = (self.drive + rng.range(0.30, 0.95)).min(1.0);
+            self.drive = (self.drive + rng.range(0.30, 0.95) * self.profile.burst).min(1.0);
         }
-        self.drive = (self.drive - dt * 0.55).max(REST);
+        self.drive = (self.drive - dt * 0.55).max(REST * self.profile.burst);
         self.gain = self.gain.clamp(0.0, 1.0);
         self.chaos = (self.drive * self.gain).clamp(0.0, 1.0);
 
@@ -215,10 +268,13 @@ impl Eye {
         self.pupil = lerp(self.pupil, want, 1.0 - (-dt * 7.0).exp());
 
         if self.burst_wait > 2.9 {
-            self.tilt_target = rng.sym() * 0.22;
+            self.tilt_target = rng.sym() * (0.22 * self.profile.burst);
         }
         self.tilt = lerp(self.tilt, self.tilt_target, 1.0 - (-dt * 2.5).exp());
-        self.iris_hue = fract(self.iris_hue + dt * 0.012 * (1.0 + self.chaos));
+        let red = self.profile.red;
+        let hue_rate = 0.012 * (1.0 + self.chaos) * if red { 2.4 } else { 1.0 };
+        let hue_bias = if red { -0.30 } else { 0.0 };
+        self.iris_hue = fract(self.iris_hue + dt * hue_rate + dt * hue_bias);
     }
 
     /// Paint the void and the eye into `f`.
@@ -444,7 +500,8 @@ impl Eye {
         let ridge = 1.0 - smoothstep(0.0, 0.030, (n - 0.5).abs());
         let vein = ridge * (0.20 + 0.80 * (1.0 - s)) * smoothstep(0.35, 0.9, 1.0 - corner);
         if vein > 0.30 {
-            color = Rgb::lerp(color, VEIN, vein * 0.8);
+            let vein_col = if self.profile.red { Rgb(196, 44, 58) } else { VEIN };
+            color = Rgb::lerp(color, vein_col, vein * 0.8);
             ch = if hash21(col, row, grain) > 0.5 {
                 '\\'
             } else {

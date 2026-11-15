@@ -2,8 +2,8 @@
 //! layout and the colours can be reviewed without a terminal.
 //! `cargo run --example slider_preview -- out.html`
 
-use glitch_eye::chaos::Slider;
-use glitch_eye::frame::Frame;
+use royaleyes::chaos::Slider;
+use royaleyes::frame::Frame;
 
 fn main() {
     let path = std::env::args()
@@ -67,8 +67,8 @@ fn main() {
     println!("wrote {path}");
 }
 
-fn push_span(html: &mut String, cell: glitch_eye::frame::Cell) {
-    use glitch_eye::color::Rgb;
+fn push_span(html: &mut String, cell: royaleyes::frame::Cell) {
+    use royaleyes::color::Rgb;
     let fg = cell.fg.unwrap_or(Rgb(200, 200, 200));
     let bg = cell.bg.unwrap_or(Rgb(8, 8, 14));
     html.push_str(&format!(
